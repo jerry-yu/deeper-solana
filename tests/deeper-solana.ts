@@ -211,7 +211,7 @@ describe("credit_setting", () => {
       .setSettings(idx0, newSettings)
       .accounts({
         settings_account: settingsAccountPda0,
-        signer: provider.wallet.publicKey,
+        signer:  payer.publicKey,
         system_program: anchor.web3.SystemProgram.programId,
       })
       .rpc({ commitment: "confirmed" });
@@ -221,16 +221,27 @@ describe("credit_setting", () => {
       commitment: "confirmed",
     });
 
-   console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
+   //console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
+
+   const tx2 = await program.methods
+      .addSetting(idx0, 500, anchor.BN(500))
+      .accounts({
+        settings_account: settingsAccountPda0,
+        signer: payer.publicKey,
+        system_program: anchor.web3.SystemProgram.programId,
+      })
+      .rpc({ commitment: "confirmed" });
+
 
     const settingsAccount = await program.account.creditSettingsAccount.fetch(settingsAccountPda0);
     console.log("settingsAccount :", settingsAccount);
     const result = await program.methods
-      .getSetting(idx0, 0)
+      .getSetting(idx0, 2)
       .accounts({
         settings_account: settingsAccountPda0,
       })
       .view();
+      
     console.log("Setting at index 0 in account idx 0:", result);
 
   } catch (error) {

@@ -217,10 +217,10 @@ pub mod deeper_solana {
         msg!("Settings len: {}", settings.len());
         for (i, setting) in settings.iter().enumerate() {
             msg!(
-                "Setting {}: apy = {}, balance = {}",
+                "Setting {}: apy_numerator  = {}, staking_balance  = {}",
                 i,
-                setting.apy,
-                setting.balance
+                setting.apy_numerator ,
+                setting.staking_balance 
             );
         }
 
@@ -249,7 +249,7 @@ pub mod deeper_solana {
         Ok(())
     }
 
-    pub fn add_setting(ctx: Context<AddSetting>, idx: u16, apy: u32, balance: u64) -> Result<()> {
+    pub fn add_setting(ctx: Context<AddSetting>, idx: u16, apy_numerator : u32, staking_balance : u64) -> Result<()> {
         let account = &mut ctx.accounts.settings_account;
 
         if account.settings.is_empty() && account.idx == 0 {
@@ -267,13 +267,13 @@ pub mod deeper_solana {
             return err!(DeeperErrorCode::InvalidIdx);
         }
 
-        let new_setting = CreditSetting { apy, balance };
+        let new_setting = CreditSetting { apy_numerator , staking_balance  };
         account.settings.push(new_setting);
         msg!(
-            "Added new setting to idx {}: apy = {}, balance = {}",
+            "Added new setting to idx {}: apy_numerator  = {}, staking_balance  = {}",
             account.idx,
-            apy,
-            balance
+            apy_numerator ,
+            staking_balance 
         );
 
         Ok(())
@@ -283,8 +283,8 @@ pub mod deeper_solana {
         ctx: Context<UpdateSetting>,
         idx: u16,
         setting_index: u32,
-        apy: u32,
-        balance: u64,
+        apy_numerator : u32,
+        staking_balance : u64,
     ) -> Result<()> {
         let account = &mut ctx.accounts.settings_account;
 
@@ -296,13 +296,13 @@ pub mod deeper_solana {
         if setting_index as usize >= account.settings.len() {
             return err!(DeeperErrorCode::InvalidSettingIndex);
         }
-        account.settings[setting_index as usize] = CreditSetting { apy, balance };
+        account.settings[setting_index as usize] = CreditSetting { apy_numerator , staking_balance  };
         msg!(
-            "Updated setting at index {} for account idx {}: apy = {}, balance = {}",
+            "Updated setting at index {} for account idx {}: apy_numerator  = {}, staking_balance  = {}",
             setting_index,
             account.idx,
-            apy,
-            balance
+            apy_numerator ,
+            staking_balance 
         );
         Ok(())
     }
@@ -347,7 +347,7 @@ pub struct Initialize<'info> {
     pub dpr_config: Account<'info, Config>,
 
     /// The user account that pays for the account creation rent.
-    /// `mut`: The payer's lamport balance will be modified (decreased).
+    /// `mut`: The payer's lamport staking_balance  will be modified (decreased).
     /// `Signer`: The payer must sign the transaction.
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -406,8 +406,8 @@ pub struct VerifyEd25519Sysvar<'info> {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, InitSpace, Debug)]
 pub struct CreditSetting {
-    pub apy: u32,
-    pub balance: u64,
+    pub apy_numerator : u32,
+    pub staking_balance : u64,
 }
 
 #[account]

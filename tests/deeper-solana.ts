@@ -202,8 +202,8 @@ describe("credit_setting", () => {
       program.programId);
 
     const newSettings = [
-      { apy: 100, balance: new anchor.BN(200) },
-      { apy: 200, balance:new anchor.BN(200) },
+      { apyNumerator : 100, stakingBalance : new anchor.BN(200) },
+      { apyNumerator : 200, stakingBalance :new anchor.BN(200) },
     ];
 
     try {
@@ -223,16 +223,15 @@ describe("credit_setting", () => {
 
    console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
 
-
     const settingsAccount = await program.account.creditSettingsAccount.fetch(settingsAccountPda0);
     console.log("settingsAccount :", settingsAccount);
-    // const result = await program.methods
-    //   .getSetting(idx0, 0)
-    //   .accounts({
-    //     settingsAccount: settingsAccountPda0,
-    //   })
-    //   .view();
-    // console.log("Setting at index 0 in account idx 0:", result);
+    const result = await program.methods
+      .getSetting(idx0, 0)
+      .accounts({
+        settings_account: settingsAccountPda0,
+      })
+      .view();
+    console.log("Setting at index 0 in account idx 0:", result);
 
   } catch (error) {
     console.error("Error sending transaction:", error);

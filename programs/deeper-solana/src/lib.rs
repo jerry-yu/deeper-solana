@@ -219,8 +219,8 @@ pub mod deeper_solana {
             msg!(
                 "Setting {}: apy_numerator  = {}, staking_balance  = {}",
                 i,
-                setting.apy_numerator ,
-                setting.staking_balance 
+                setting.apy_numerator,
+                setting.staking_balance
             );
         }
 
@@ -249,7 +249,12 @@ pub mod deeper_solana {
         Ok(())
     }
 
-    pub fn add_setting(ctx: Context<AddSetting>, idx: u16, apy_numerator : u32, staking_balance : u64) -> Result<()> {
+    pub fn add_setting(
+        ctx: Context<AddSetting>,
+        idx: u16,
+        apy_numerator: u32,
+        staking_balance: u64,
+    ) -> Result<()> {
         let account = &mut ctx.accounts.settings_account;
 
         if account.settings.is_empty() && account.idx == 0 {
@@ -267,13 +272,16 @@ pub mod deeper_solana {
             return err!(DeeperErrorCode::InvalidIdx);
         }
 
-        let new_setting = CreditSetting { apy_numerator , staking_balance  };
+        let new_setting = CreditSetting {
+            apy_numerator,
+            staking_balance,
+        };
         account.settings.push(new_setting);
         msg!(
             "Added new setting to idx {}: apy_numerator  = {}, staking_balance  = {}",
             account.idx,
-            apy_numerator ,
-            staking_balance 
+            apy_numerator,
+            staking_balance
         );
 
         Ok(())
@@ -283,12 +291,11 @@ pub mod deeper_solana {
         ctx: Context<UpdateSetting>,
         idx: u16,
         setting_index: u32,
-        apy_numerator : u32,
-        staking_balance : u64,
+        apy_numerator: u32,
+        staking_balance: u64,
     ) -> Result<()> {
         let account = &mut ctx.accounts.settings_account;
 
-        // 验证 idx 一致性
         if account.idx != idx {
             return err!(DeeperErrorCode::InvalidIdx);
         }
@@ -296,13 +303,16 @@ pub mod deeper_solana {
         if setting_index as usize >= account.settings.len() {
             return err!(DeeperErrorCode::InvalidSettingIndex);
         }
-        account.settings[setting_index as usize] = CreditSetting { apy_numerator , staking_balance  };
+        account.settings[setting_index as usize] = CreditSetting {
+            apy_numerator,
+            staking_balance,
+        };
         msg!(
             "Updated setting at index {} for account idx {}: apy_numerator  = {}, staking_balance  = {}",
             setting_index,
             account.idx,
             apy_numerator ,
-            staking_balance 
+            staking_balance,
         );
         Ok(())
     }
@@ -406,8 +416,8 @@ pub struct VerifyEd25519Sysvar<'info> {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, InitSpace, Debug)]
 pub struct CreditSetting {
-    pub apy_numerator : u32,
-    pub staking_balance : u64,
+    pub apy_numerator: u32,
+    pub staking_balance: u64,
 }
 
 #[account]

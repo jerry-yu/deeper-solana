@@ -223,8 +223,8 @@ describe("credit_setting", () => {
 
    //console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
 
-   const tx2 = await program.methods
-      .addSetting(idx0, 500, anchor.BN(500))
+   await program.methods
+      .addSetting(idx0, 500, new anchor.BN(500))
       .accounts({
         settings_account: settingsAccountPda0,
         signer: payer.publicKey,
@@ -242,8 +242,26 @@ describe("credit_setting", () => {
       })
       .view();
       
-    console.log("Setting at index 0 in account idx 0:", result);
+    assert.equal(result.apyNumerator.toString(), "500");
+    assert.equal(result.stakingBalance.toString(), "500");
 
+    await program.methods
+      .updateSetting(idx0,0,600, new anchor.BN(600))
+      .accounts({
+        settings_account: settingsAccountPda0,
+        signer: payer.publicKey
+      })
+      .rpc({ commitment: "confirmed" });
+
+      const result2 = await program.methods
+        .getSetting(idx0, 0)
+        .accounts({
+          settings_account: settingsAccountPda0,
+        })
+        .view();
+        console.log("Setting : ", result2);
+        assert.equal(result2.apyNumerator.toString(), "600");
+        assert.equal(result2.stakingBalance.toString(), "600");
   } catch (error) {
     console.error("Error sending transaction:", error);
     if (error instanceof anchor.AnchorError) {

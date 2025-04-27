@@ -18,7 +18,11 @@ declare_id!("H1niZpkjAjop7hqR4jimhtmstiWTLZ9fnooR4vTWFbHs");
 pub mod deeper_solana {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, initial_admin: Pubkey) -> Result<()> {
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        initial_admin: Pubkey,
+        dev_key: Pubkey,
+    ) -> Result<()> {
         msg!("Initializing contract configuration...");
 
         // Access the configuration account being initialized
@@ -26,10 +30,12 @@ pub mod deeper_solana {
 
         // Set the admin field in the account's data
         config_account.admin = initial_admin;
+        config_account.dev_key = dev_key;
         // You can also store the bump seed if needed for later PDA derivation validation
         config_account.bump = ctx.bumps.dpr_config;
 
         msg!("Admin set to: {}", config_account.admin);
+        msg!("Dev key set to: {}", config_account.dev_key);
         msg!("Configuration account initialized successfully!");
         Ok(())
     }
@@ -45,6 +51,34 @@ pub mod deeper_solana {
         config_account.admin = new_admin;
 
         msg!("Admin updated to: {}", config_account.admin);
+        Ok(())
+    }
+
+    pub fn update_timestamp(ctx: Context<UpdateTimeStamp>) -> Result<()> {
+        let config = &ctx.accounts.dpr_config;
+        if ctx.accounts.payer.key() != config.admin {
+            return err!(DeeperErrorCode::Unauthorized);
+        }
+
+        let clock: Clock = Clock::get()?;
+        let current_timestamp = clock.unix_timestamp;
+
+        let credit = &mut ctx.accounts.credit_info;
+        credit.timestamp = current_timestamp;
+        msg!("Updated timestamp for user {}: {}", credit.user, credit.timestamp);
+        Ok(())
+    }
+
+    pub fn update_dev_key(ctx: Context<UpdateDevKey>, new_dev_key: Pubkey) -> Result<()> {
+        msg!("Updating dev key...");
+
+        // Access the configuration account
+        let config_account = &mut ctx.accounts.dpr_config;
+
+        // Update the dev key field
+        config_account.dev_key = new_dev_key;
+
+        msg!("Dev key updated to: {}", config_account.dev_key);
         Ok(())
     }
 
@@ -350,7 +384,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = payer,
-        space = 8 + 32 + 1, // 8 discriminator + 32 Pubkey + 1 bump
+        space = 8+Config::INIT_SPACE, // 8 discriminator + 32 Pubkey + 1 bump
         seeds = [b"config".as_ref()],
         bump
     )]
@@ -381,6 +415,44 @@ pub struct UpdateAdmin<'info> {
 }
 
 #[derive(Accounts)]
+pub struct UpdateTimeStamp<'info> {
+        #[account(mut)]
+        pub payer: Signer<'info>,
+        /// CHECK: User pubkey, used for PDA derivation and stored in credit
+        pub user: AccountInfo<'info>,
+    
+        #[account(
+            seeds = [b"config".as_ref()], 
+            bump = dpr_config.bump
+        )]
+        pub dpr_config: Account<'info, Config>,
+    
+        #[account(
+            init_if_needed,
+            space = 8+CreditInfo::INIT_SPACE, // 8 bytes for discriminator + 8 bytes for u64 + 32 bytes for Pubkey
+            payer = payer,
+            seeds = [b"credit".as_ref(), user.key().as_ref()], // Seeds to derive the PDA
+            bump, // Use the stored bump to verify/find the PDA
+        )]
+        pub credit_info: Account<'info, CreditInfo>,
+        pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateDevKey<'info> {
+    #[account(
+        mut,
+        has_one = admin,
+        seeds = [b"config".as_ref()], // Seeds to find the PDA
+        bump = dpr_config.bump // Use the stored bump to verify/find the PDA
+    )]
+    pub dpr_config: Account<'info, Config>,
+
+    /// The current admin authority signing the transaction.
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
 pub struct SetCredit<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -395,7 +467,7 @@ pub struct SetCredit<'info> {
 
     #[account(
         init_if_needed,
-        space = 8 + 8 + 32, // 8 bytes for discriminator + 8 bytes for u64 + 32 bytes for Pubkey
+        space = 8+CreditInfo::INIT_SPACE, // 8 bytes for discriminator + 8 bytes for u64 + 32 bytes for Pubkey
         payer = payer,
         seeds = [b"credit".as_ref(), user.key().as_ref()], // Seeds to derive the PDA
         bump, // Use the stored bump to verify/find the PDA
@@ -434,7 +506,7 @@ pub struct SetSettings<'info> {
     #[account(
         init_if_needed,
         payer = signer,
-        space = 8 + CreditSettingsAccount::INIT_SPACE,
+        space = 8+CreditSettingsAccount::INIT_SPACE,
         seeds = [b"settings".as_ref(), &idx.to_le_bytes()],
         bump
     )]

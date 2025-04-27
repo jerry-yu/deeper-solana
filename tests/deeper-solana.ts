@@ -5,15 +5,20 @@ import { PublicKey, Keypair, Ed25519Program, SYSVAR_INSTRUCTIONS_PUBKEY } from '
 import assert from 'node:assert';
 import nacl from "tweetnacl";
 
+const devKey = Keypair.generate();
 
 describe("deeper-solana", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
+ 
   const program = anchor.workspace.deeperSolana as Program<DeeperSolana>;
-
   const payer = provider.wallet as anchor.Wallet;
   const [configPDA] = PublicKey.findProgramAddressSync([Buffer.from('config')], program.programId);
 
+  const oldDevKey = Keypair.generate();
+  const oldAdmin = Keypair.generate();
+  console.log("Old Admin Keypair:", oldAdmin.publicKey.toBase58());
+  console.log("Old Dev Keypair:", oldDevKey.publicKey.toBase58());
   const user1 = Keypair.generate();
   const user2 = Keypair.generate();
   const nonAdmin = Keypair.generate();
@@ -28,15 +33,47 @@ describe("deeper-solana", () => {
     program.programId
   );
 
-  it("Creates credit account for user1 via setCredit", async () => {
+  it("Updates admin and dev key", async () => {
+   await provider.connection.requestAirdrop(oldAdmin.publicKey, 10e9);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
     const tx = await program.methods
-      .initialize(payer.publicKey)
-      .accounts({ dpr_config: configPDA, payer: payer.publicKey }).rpc();
+      .initialize(oldAdmin.publicKey, oldDevKey.publicKey)
+      .accounts({
+        dpr_config: configPDA,
+        payer: oldAdmin.publicKey,
+        system_program: anchor.web3.SystemProgram.programId
+      }).signers([oldAdmin]).rpc();
 
     console.log("Your transaction signature", tx);
-    const userAccount = await program.account.config.fetch(configPDA);
-    assert.equal(userAccount.admin.toBase58(), payer.publicKey.toBase58());
+    const configAccount = await program.account.config.fetch(configPDA);
+    assert.equal(configAccount.admin.toBase58(), oldAdmin.publicKey.toBase58());
+    assert.equal(configAccount.devKey.toBase58(), oldDevKey.publicKey.toBase58());
 
+    console.log("2222222222222 ");
+    await program.methods
+      .updateDevKey(devKey.publicKey)
+      .accounts({
+        admin: oldAdmin.publicKey,
+        dpr_config: configPDA,
+      }).signers([oldAdmin]).rpc();
+
+      console.log("333333333333333333 ");
+    await program.methods
+      .updateAdmin(payer.publicKey)
+      .accounts({
+        admin: oldAdmin.publicKey,
+        dpr_config: configPDA,
+      }).signers([oldAdmin])
+      .rpc();
+
+      console.log(" 4444444444444444444 ");
+    const configAccount2 = await program.account.config.fetch(configPDA);
+    assert.equal(configAccount2.devKey.toBase58(), devKey.publicKey.toBase58());
+    assert.equal(configAccount2.admin.toBase58(), payer.publicKey.toBase58());
+  });
+
+  it("Creates credit account for user1 via setCredit", async () => {
     await program.methods
       .setCredit(new anchor.BN(100))
       .accounts({
@@ -52,6 +89,8 @@ describe("deeper-solana", () => {
     assert.equal(creditAccount.user.toBase58(), user1.publicKey.toBase58());
     assert.equal(creditAccount.number.toString(), "100");
   });
+
+
 
   it("Updates user1's credit account via setCredit", async () => {
     await program.methods
@@ -115,6 +154,7 @@ describe("deeper-solana", () => {
     assert.equal(creditAccount.number.toString(), "200"); // Still 200
   });
 });
+
 
 describe("ed25519_verify_sysvar", () => { // Updated describe block
   const provider = anchor.AnchorProvider.env();
@@ -202,56 +242,56 @@ describe("credit_setting", () => {
       program.programId);
 
     const newSettings = [
-      { apyNumerator : 100, stakingBalance : new anchor.BN(200) },
-      { apyNumerator : 200, stakingBalance :new anchor.BN(200) },
+      { apyNumerator: 100, stakingBalance: new anchor.BN(200) },
+      { apyNumerator: 200, stakingBalance: new anchor.BN(200) },
     ];
 
     try {
-    const tx = await program.methods
-      .setSettings(idx0, newSettings)
-      .accounts({
-        settings_account: settingsAccountPda0,
-        signer:  payer.publicKey,
-        system_program: anchor.web3.SystemProgram.programId,
-      })
-      .rpc({ commitment: "confirmed" });
-    console.log("Set settings for account idx 0:", settingsAccountPda0.toBase58());
-    const txInfo = await provider.connection.getTransaction(tx, {
-      maxSupportedTransactionVersion: 0,
-      commitment: "confirmed",
-    });
+      const tx = await program.methods
+        .setSettings(idx0, newSettings)
+        .accounts({
+          settings_account: settingsAccountPda0,
+          signer: payer.publicKey,
+          system_program: anchor.web3.SystemProgram.programId,
+        })
+        .rpc({ commitment: "confirmed" });
+      console.log("Set settings for account idx 0:", settingsAccountPda0.toBase58());
+      const txInfo = await provider.connection.getTransaction(tx, {
+        maxSupportedTransactionVersion: 0,
+        commitment: "confirmed",
+      });
 
-   //console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
+      //console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
 
-   await program.methods
-      .addSetting(idx0, 500, new anchor.BN(500))
-      .accounts({
-        settings_account: settingsAccountPda0,
-        signer: payer.publicKey,
-        system_program: anchor.web3.SystemProgram.programId,
-      })
-      .rpc({ commitment: "confirmed" });
+      await program.methods
+        .addSetting(idx0, 500, new anchor.BN(500))
+        .accounts({
+          settings_account: settingsAccountPda0,
+          signer: payer.publicKey,
+          system_program: anchor.web3.SystemProgram.programId,
+        })
+        .rpc({ commitment: "confirmed" });
 
 
-    const settingsAccount = await program.account.creditSettingsAccount.fetch(settingsAccountPda0);
-    console.log("settingsAccount :", settingsAccount);
-    const result = await program.methods
-      .getSetting(idx0, 2)
-      .accounts({
-        settings_account: settingsAccountPda0,
-      })
-      .view();
-      
-    assert.equal(result.apyNumerator.toString(), "500");
-    assert.equal(result.stakingBalance.toString(), "500");
+      const settingsAccount = await program.account.creditSettingsAccount.fetch(settingsAccountPda0);
+      console.log("settingsAccount :", settingsAccount);
+      const result = await program.methods
+        .getSetting(idx0, 2)
+        .accounts({
+          settings_account: settingsAccountPda0,
+        })
+        .view();
 
-    await program.methods
-      .updateSetting(idx0,0,600, new anchor.BN(600))
-      .accounts({
-        settings_account: settingsAccountPda0,
-        signer: payer.publicKey
-      })
-      .rpc({ commitment: "confirmed" });
+      assert.equal(result.apyNumerator.toString(), "500");
+      assert.equal(result.stakingBalance.toString(), "500");
+
+      await program.methods
+        .updateSetting(idx0, 0, 600, new anchor.BN(600))
+        .accounts({
+          settings_account: settingsAccountPda0,
+          signer: payer.publicKey
+        })
+        .rpc({ commitment: "confirmed" });
 
       const result2 = await program.methods
         .getSetting(idx0, 0)
@@ -259,19 +299,19 @@ describe("credit_setting", () => {
           settings_account: settingsAccountPda0,
         })
         .view();
-        console.log("Setting : ", result2);
-        assert.equal(result2.apyNumerator.toString(), "600");
-        assert.equal(result2.stakingBalance.toString(), "600");
-  } catch (error) {
-    console.error("Error sending transaction:", error);
-    if (error instanceof anchor.AnchorError) {
-      console.error("Anchor Error:", error.error);
-      console.error("Error Logs:", error.logs);
-    } else if (error.logs) {
-      console.error("Transaction Logs:", error.logs);
+      console.log("Setting : ", result2);
+      assert.equal(result2.apyNumerator.toString(), "600");
+      assert.equal(result2.stakingBalance.toString(), "600");
+    } catch (error) {
+      console.error("Error sending transaction:", error);
+      if (error instanceof anchor.AnchorError) {
+        console.error("Anchor Error:", error.error);
+        console.error("Error Logs:", error.logs);
+      } else if (error.logs) {
+        console.error("Transaction Logs:", error.logs);
+      }
+      throw error;
     }
-    throw error;
-  }
 
   });
 });
@@ -323,9 +363,5 @@ describe("credit_setting", () => {
 //   }
 // });
 
-// Add other failure case tests from the original Sysvar example (missing pre-ix, wrong pre-ix, data mismatch)
-// These tests WILL fail within *your* Anchor program's checks (require! statements)
-// and should throw the specific AnchorErrors (NoPrecedingInstruction, InvalidPrecedingInstructionProgram, etc.)
-// ... (include those tests here, adapted for the new function/program names) ...
 
 //});

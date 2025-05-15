@@ -211,7 +211,8 @@ describe("ed25519_verify_sysvar", () => { // Updated describe block
       console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
 
       // expect(txInfo?.meta?.logMessages).to.include("Verification successful: Preceding Ed25519 instruction data matches arguments.");
-      // expect(txInfo?.meta?.err).to.be.null;
+      //expect(txInfo?.meta?.err).to.be.null;
+      assert.equal(txInfo?.meta?.err, null);
 
     } catch (error) {
       console.error("Error sending transaction:", error);
@@ -242,8 +243,8 @@ describe("credit_setting", () => {
       program.programId);
 
     const newSettings = [
-      { apyNumerator: 100, stakingBalance: new anchor.BN(200) },
-      { apyNumerator: 200, stakingBalance: new anchor.BN(200) },
+      {  dailyReward: new anchor.BN(200) },
+      {  dailyReward: new anchor.BN(200) },
     ];
 
     try {
@@ -264,7 +265,7 @@ describe("credit_setting", () => {
       //console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
 
       await program.methods
-        .addSetting(idx0, 500, new anchor.BN(500))
+        .addSetting(idx0, new anchor.BN(500))
         .accounts({
           settings_account: settingsAccountPda0,
           signer: payer.publicKey,
@@ -282,11 +283,10 @@ describe("credit_setting", () => {
         })
         .view();
 
-      assert.equal(result.apyNumerator.toString(), "500");
-      assert.equal(result.stakingBalance.toString(), "500");
+      assert.equal(result.dailyReward.toString(), "500");
 
       await program.methods
-        .updateSetting(idx0, 0, 600, new anchor.BN(600))
+        .updateSetting(idx0, 0, new anchor.BN(600))
         .accounts({
           settings_account: settingsAccountPda0,
           signer: payer.publicKey
@@ -300,8 +300,7 @@ describe("credit_setting", () => {
         })
         .view();
       console.log("Setting : ", result2);
-      assert.equal(result2.apyNumerator.toString(), "600");
-      assert.equal(result2.stakingBalance.toString(), "600");
+      assert.equal(result2.dailyReward.toString(), "600");
     } catch (error) {
       console.error("Error sending transaction:", error);
       if (error instanceof anchor.AnchorError) {

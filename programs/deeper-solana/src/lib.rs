@@ -65,7 +65,11 @@ pub mod deeper_solana {
 
         let credit = &mut ctx.accounts.credit_info;
         credit.timestamp = current_timestamp;
-        msg!("Updated timestamp for user {}: {}", credit.user, credit.timestamp);
+        msg!(
+            "Updated timestamp for user {}: {}",
+            credit.user,
+            credit.timestamp
+        );
         Ok(())
     }
 
@@ -250,12 +254,7 @@ pub mod deeper_solana {
 
         msg!("Settings len: {}", settings.len());
         for (i, setting) in settings.iter().enumerate() {
-            msg!(
-                "Setting {}: apy_numerator  = {}, staking_balance  = {}",
-                i,
-                setting.apy_numerator,
-                setting.staking_balance
-            );
+            msg!("Setting {}: daily_reward  = {}", i, setting.daily_reward,);
         }
 
         let account = &mut ctx.accounts.settings_account;
@@ -283,12 +282,7 @@ pub mod deeper_solana {
         Ok(())
     }
 
-    pub fn add_setting(
-        ctx: Context<AddSetting>,
-        idx: u16,
-        apy_numerator: u32,
-        staking_balance: u64,
-    ) -> Result<()> {
+    pub fn add_setting(ctx: Context<AddSetting>, idx: u16, daily_reward: u64) -> Result<()> {
         let account = &mut ctx.accounts.settings_account;
 
         if account.settings.is_empty() && account.idx == 0 {
@@ -306,16 +300,12 @@ pub mod deeper_solana {
             return err!(DeeperErrorCode::InvalidIdx);
         }
 
-        let new_setting = CreditSetting {
-            apy_numerator,
-            staking_balance,
-        };
+        let new_setting = CreditSetting { daily_reward };
         account.settings.push(new_setting);
         msg!(
-            "Added new setting to idx {}: apy_numerator  = {}, staking_balance  = {}",
+            "Added new setting to idx {}: daily_reward  = {}",
             account.idx,
-            apy_numerator,
-            staking_balance
+            daily_reward,
         );
 
         Ok(())
@@ -325,8 +315,7 @@ pub mod deeper_solana {
         ctx: Context<UpdateSetting>,
         idx: u16,
         setting_index: u32,
-        apy_numerator: u32,
-        staking_balance: u64,
+        daily_reward: u64,
     ) -> Result<()> {
         let account = &mut ctx.accounts.settings_account;
 
@@ -337,16 +326,12 @@ pub mod deeper_solana {
         if setting_index as usize >= account.settings.len() {
             return err!(DeeperErrorCode::InvalidSettingIndex);
         }
-        account.settings[setting_index as usize] = CreditSetting {
-            apy_numerator,
-            staking_balance,
-        };
+        account.settings[setting_index as usize] = CreditSetting { daily_reward };
         msg!(
-            "Updated setting at index {} for account idx {}: apy_numerator  = {}, staking_balance  = {}",
+            "Updated setting at index {} for account idx {}:  daily_reward  = {}",
             setting_index,
             account.idx,
-            apy_numerator ,
-            staking_balance,
+            daily_reward,
         );
         Ok(())
     }
@@ -416,26 +401,26 @@ pub struct UpdateAdmin<'info> {
 
 #[derive(Accounts)]
 pub struct UpdateTimeStamp<'info> {
-        #[account(mut)]
-        pub payer: Signer<'info>,
-        /// CHECK: User pubkey, used for PDA derivation and stored in credit
-        pub user: AccountInfo<'info>,
-    
-        #[account(
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK: User pubkey, used for PDA derivation and stored in credit
+    pub user: AccountInfo<'info>,
+
+    #[account(
             seeds = [b"config".as_ref()], 
             bump = dpr_config.bump
         )]
-        pub dpr_config: Account<'info, Config>,
-    
-        #[account(
+    pub dpr_config: Account<'info, Config>,
+
+    #[account(
             init_if_needed,
             space = 8+CreditInfo::INIT_SPACE, // 8 bytes for discriminator + 8 bytes for u64 + 32 bytes for Pubkey
             payer = payer,
             seeds = [b"credit".as_ref(), user.key().as_ref()], // Seeds to derive the PDA
             bump, // Use the stored bump to verify/find the PDA
         )]
-        pub credit_info: Account<'info, CreditInfo>,
-        pub system_program: Program<'info, System>,
+    pub credit_info: Account<'info, CreditInfo>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -488,14 +473,13 @@ pub struct VerifyEd25519Sysvar<'info> {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, InitSpace, Debug)]
 pub struct CreditSetting {
-    pub apy_numerator: u32,
-    pub staking_balance: u64,
+    pub daily_reward: u64,
 }
 
 #[account]
 #[derive(InitSpace, Debug)]
 pub struct CreditSettingsAccount {
-    #[max_len(10, 12)]
+    #[max_len(10)]
     pub settings: Vec<CreditSetting>,
     pub idx: u16,
 }

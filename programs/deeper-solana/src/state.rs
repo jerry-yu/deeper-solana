@@ -19,15 +19,26 @@ pub struct Config {
 #[account]
 #[derive(InitSpace)]
 pub struct CreditInfo {
+    pub bump: u8,
+    /// The public key of the user.
     pub user: Pubkey,
-    pub number: u16,
-    pub timestamp: i64,
+    pub campaign : u16,
+    pub credit: u32,
+    pub day: u32,
+}
+/// Defines the structure of the credit settings.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, InitSpace, Debug)]
+pub struct CreditSetting {
+    pub daily_reward: u64,
 }
 
-#[account]
-#[derive(InitSpace)]
-pub struct CreditSetting {
-    // the numerator of the millionth fraction
-    pub apy: u32,
-    pub balance: u64,
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
+pub struct DayCredit {
+    pub day: u32,
+    pub credit: u32,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct DayCreditHistory {
+    pub history : Vec<DayCredit>,
 }

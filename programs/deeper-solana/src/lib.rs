@@ -2,7 +2,7 @@ pub mod state;
 // pub mod instructions;
 pub mod error;
 
-use state::{Config, CreditInfo};
+use state::{Config, CreditInfo,CreditSetting,DayCreditHistory};
 
 use anchor_lang::prelude::*;
 use error::DeeperErrorCode;
@@ -11,144 +11,23 @@ use solana_program::{
     sysvar::instructions as tx_instructions, sysvar::instructions::load_instruction_at_checked,
 };
 pub const CREDIT_SIZE: usize = 10;
+pub const START_TIMESTAMP: i64 = 173568960000; // 2025-01-01 00:00:00 UTC with ms precision
 // Replace with your program's actual ID after deployment
 declare_id!("H1niZpkjAjop7hqR4jimhtmstiWTLZ9fnooR4vTWFbHs");
 
-#[program]
-pub mod deeper_solana {
-    use super::*;
-
-    pub fn initialize(
-        ctx: Context<Initialize>,
-        initial_admin: Pubkey,
-        dev_key: Pubkey,
-    ) -> Result<()> {
-        msg!("Initializing contract configuration...");
-
-        // Access the configuration account being initialized
-        let config_account = &mut ctx.accounts.dpr_config;
-
-        // Set the admin field in the account's data
-        config_account.admin = initial_admin;
-        config_account.dev_key = dev_key;
-        // You can also store the bump seed if needed for later PDA derivation validation
-        config_account.bump = ctx.bumps.dpr_config;
-
-        msg!("Admin set to: {}", config_account.admin);
-        msg!("Dev key set to: {}", config_account.dev_key);
-        msg!("Configuration account initialized successfully!");
-        Ok(())
+    fn cur_day() -> u32 {
+        let clock: Clock = Clock::get().unwrap();
+        let current_second = (clock.unix_timestamp - START_TIMESTAMP) / 1000;
+        (current_second % 86400) as u32 // 86400 seconds in a day
     }
 
-    // You might add other instructions here later, e.g., to change the admin
-    pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
-        msg!("Updating admin...");
-
-        // Access the configuration account
-        let config_account = &mut ctx.accounts.dpr_config;
-
-        // Update the admin field
-        config_account.admin = new_admin;
-
-        msg!("Admin updated to: {}", config_account.admin);
-        Ok(())
-    }
-
-    pub fn update_timestamp(ctx: Context<UpdateTimeStamp>) -> Result<()> {
-        let config = &ctx.accounts.dpr_config;
-        if ctx.accounts.payer.key() != config.admin {
-            return err!(DeeperErrorCode::Unauthorized);
-        }
-
-        let clock: Clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        let credit = &mut ctx.accounts.credit_info;
-        credit.timestamp = current_timestamp;
-        msg!(
-            "Updated timestamp for user {}: {}",
-            credit.user,
-            credit.timestamp
-        );
-        Ok(())
-    }
-
-    pub fn update_dev_key(ctx: Context<UpdateDevKey>, new_dev_key: Pubkey) -> Result<()> {
-        msg!("Updating dev key...");
-
-        // Access the configuration account
-        let config_account = &mut ctx.accounts.dpr_config;
-
-        // Update the dev key field
-        config_account.dev_key = new_dev_key;
-
-        msg!("Dev key updated to: {}", config_account.dev_key);
-        Ok(())
-    }
-
-    pub fn set_credit(ctx: Context<SetCredit>, new_number: u16) -> Result<()> {
-        // Check if the signer is the admin
-        let config = &ctx.accounts.dpr_config;
-        if ctx.accounts.payer.key() != config.admin {
-            return err!(DeeperErrorCode::Unauthorized);
-        }
-
-        let credit = &mut ctx.accounts.credit_info;
-        credit.user = ctx.accounts.user.key();
-        credit.number = new_number;
-        Ok(())
-    }
-
-    pub fn verify_ed25519_via_sysvar(
-        // Renamed function for clarity
-        ctx: Context<VerifyEd25519Sysvar>, // Renamed context struct
+    fn verify_ed25519_signature(
         public_key: [u8; 32],
         message: Vec<u8>,
         signature: [u8; 64],
+        data : &[u8],
     ) -> Result<()> {
-        msg!("Verifying Ed25519 signature via Instructions Sysvar...");
-        msg!("Expected Public Key: {:?}", public_key);
-        // msg!("Expected Message: {:?}", message); // Can be long
-        msg!("Expected Signature: {:?}", signature);
-
-        // 1. Get the Instructions sysvar account
-        let ix_sysvar = &ctx.accounts.instruction_sysvar;
-        //let ix_sysvar_data = ix_sysvar.try_borrow_data()?;
-
-        // 2. Load the current instruction index
-        let current_ix_index = tx_instructions::load_current_index_checked(ix_sysvar)
-            .map_err(|_| error!(DeeperErrorCode::InstructionLoadFailed))?;
-        msg!("Current instruction index: {}", current_ix_index);
-
-        // 3. Ensure there *is* a preceding instruction
-        if current_ix_index == 0 {
-            msg!("Error: No preceding instruction found.");
-            return Err(error!(DeeperErrorCode::NoPrecedingInstruction));
-        }
-        let preceding_ix_index = current_ix_index - 1;
-        msg!("Preceding instruction index: {}", preceding_ix_index);
-
-        // 4. Load the preceding instruction
-        let preceding_ix = load_instruction_at_checked(preceding_ix_index as usize, &ix_sysvar)
-            .map_err(|_| {
-                msg!(
-                    "Error: Failed to load preceding instruction at index {}.",
-                    preceding_ix_index
-                );
-                error!(DeeperErrorCode::InstructionLoadFailed)
-            })?;
-        msg!("Preceding instruction loaded.");
-
-        //5. Check that the preceding instruction was for the Ed25519 program
-        require_keys_eq!(
-            preceding_ix.program_id,
-            ed25519_program::ID,
-            DeeperErrorCode::InvalidPrecedingInstructionProgram
-        );
-        msg!("Preceding instruction program ID matches Ed25519 program.");
-
         // 6. Deserialize the Ed25519 instruction data to verify its contents
-        let data = &preceding_ix.data;
         msg!("Preceding instruction data length: {}", data.len());
 
         // Minimum size check (header = 16 bytes)
@@ -243,9 +122,158 @@ pub mod deeper_solana {
         Ok(())
     }
 
+#[program]
+pub mod deeper_solana {
+    use super::*;
+
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        initial_admin: Pubkey,
+        dev_key: Pubkey,
+    ) -> Result<()> {
+        msg!("Initializing contract configuration...");
+
+        // Access the configuration account being initialized
+        let config_account = &mut ctx.accounts.dpr_config;
+
+        // Set the admin field in the account's data
+        config_account.admin = initial_admin;
+        config_account.dev_key = dev_key;
+        // You can also store the bump seed if needed for later PDA derivation validation
+        config_account.bump = ctx.bumps.dpr_config;
+
+        msg!("Admin set to: {}", config_account.admin);
+        msg!("Dev key set to: {}", config_account.dev_key);
+        msg!("Configuration account initialized successfully!");
+        Ok(())
+    }
+
+    // You might add other instructions here later, e.g., to change the admin
+    pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
+        msg!("Updating admin...");
+
+        // Access the configuration account
+        let config_account = &mut ctx.accounts.dpr_config;
+
+        // Update the admin field
+        config_account.admin = new_admin;
+
+        msg!("Admin updated to: {}", config_account.admin);
+        Ok(())
+    }
+
+    pub fn update_timestamp(ctx: Context<UpdateTimeStamp>) -> Result<()> {
+        let config = &ctx.accounts.dpr_config;
+        if ctx.accounts.payer.key() != config.admin {
+            return err!(DeeperErrorCode::Unauthorized);
+        }
+
+        let credit = &mut ctx.accounts.credit_info;
+        credit.day = cur_day();
+        msg!(
+            "Updated timestamp for user {}: {}",
+            credit.user,
+            credit.day
+        );
+        Ok(())
+    }
+
+    pub fn update_dev_key(ctx: Context<UpdateDevKey>, new_dev_key: Pubkey) -> Result<()> {
+        msg!("Updating dev key...");
+
+        // Access the configuration account
+        let config_account = &mut ctx.accounts.dpr_config;
+
+        // Update the dev key field
+        config_account.dev_key = new_dev_key;
+
+        msg!("Dev key updated to: {}", config_account.dev_key);
+        Ok(())
+    }
+
+    pub fn set_credit(ctx: Context<SetCredit>,campaign: u16, new_credit: u32) -> Result<()> {
+        // Check if the signer is the admin
+        let config = &ctx.accounts.dpr_config;
+        if ctx.accounts.payer.key() != config.admin {
+            return err!(DeeperErrorCode::Unauthorized);
+        }
+
+        let credit: &mut Account<'_, CreditInfo> = &mut ctx.accounts.credit_info;
+        credit.user = ctx.accounts.user.key();
+        credit.campaign = campaign;
+        credit.credit = new_credit;
+        if credit.day == 0 {
+            credit.day = cur_day();
+        }
+        Ok(())
+    }
+
+    pub fn verify_ed25519_via_sysvar(
+        // Renamed function for clarity
+        ctx: Context<VerifyEd25519Sysvar>, // Renamed context struct
+        public_key: [u8; 32],
+        message: Vec<u8>,
+        signature: [u8; 64],
+    ) -> Result<()> {
+        msg!("Verifying Ed25519 signature via Instructions Sysvar...");
+        msg!("Expected Public Key: {:?}", Pubkey::from(public_key));
+        // msg!("Expected Message: {:?}", message); // Can be long
+        msg!("Expected Signature: {:?}", signature);
+        msg!("dev key: {:?}", ctx.accounts.dpr_config.dev_key);
+
+        if ctx.accounts.dpr_config.dev_key != Pubkey::from(public_key)  {
+            return err!(DeeperErrorCode::Unauthorized);
+        }
+
+        let history: DayCreditHistory = DayCreditHistory::try_from_slice(&message)
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        msg!("Parsed history: {:?}", history);
+
+        // 1. Get the Instructions sysvar account
+        let ix_sysvar = &ctx.accounts.instruction_sysvar;
+        //let ix_sysvar_data = ix_sysvar.try_borrow_data()?;
+
+        // 2. Load the current instruction index
+        let current_ix_index = tx_instructions::load_current_index_checked(ix_sysvar)
+            .map_err(|_| error!(DeeperErrorCode::InstructionLoadFailed))?;
+        msg!("Current instruction index: {}", current_ix_index);
+
+        // 3. Ensure there *is* a preceding instruction
+        if current_ix_index == 0 {
+            msg!("Error: No preceding instruction found.");
+            return Err(error!(DeeperErrorCode::NoPrecedingInstruction));
+        }
+        let preceding_ix_index = current_ix_index - 1;
+        msg!("Preceding instruction index: {}", preceding_ix_index);
+
+        // 4. Load the preceding instruction
+        let preceding_ix = load_instruction_at_checked(preceding_ix_index as usize, &ix_sysvar)
+            .map_err(|_| {
+                msg!(
+                    "Error: Failed to load preceding instruction at index {}.",
+                    preceding_ix_index
+                );
+                error!(DeeperErrorCode::InstructionLoadFailed)
+            })?;
+        msg!("Preceding instruction loaded.");
+
+        //5. Check that the preceding instruction was for the Ed25519 program
+        require_keys_eq!(
+            preceding_ix.program_id,
+            ed25519_program::ID,
+            DeeperErrorCode::InvalidPrecedingInstructionProgram
+        );
+        msg!("Preceding instruction program ID matches Ed25519 program.");
+
+        verify_ed25519_signature(public_key, message, signature, &preceding_ix.data)?;
+
+        msg!("Verification successful: Preceding Ed25519 instruction data matches arguments.");
+        Ok(())
+    }
+
     pub fn set_settings(
         ctx: Context<SetSettings>,
-        idx: u16,
+        campaign: u16,
         settings: Vec<CreditSetting>,
     ) -> Result<()> {
         if settings.len() > CREDIT_SIZE {
@@ -260,14 +288,14 @@ pub mod deeper_solana {
         let account = &mut ctx.accounts.settings_account;
 
         if account.settings.is_empty() && account.idx == 0 {
-            account.idx = idx;
+            account.idx = campaign;
             msg!(
                 "Initialized CreditSettingsAccount with idx: {}",
                 account.idx
             );
         }
 
-        if account.idx != idx {
+        if account.idx != campaign {
             return err!(DeeperErrorCode::InvalidIdx);
         }
 
@@ -350,6 +378,14 @@ pub mod deeper_solana {
             return err!(DeeperErrorCode::InvalidSettingIndex);
         }
         Ok(account.settings[setting_index as usize])
+    }
+
+     pub fn dummy_instruction(
+        _ctx: Context<GetSetting>,
+        _dummy: DayCreditHistory,
+    ) -> Result<()> {
+        // Empty implementation, used only to allow IDL to include DayCreditHistory
+        Ok(())
     }
 }
 
@@ -466,14 +502,12 @@ pub struct VerifyEd25519Sysvar<'info> {
     // Renamed context struct
     #[account(mut)]
     pub signer: Signer<'info>, // Transaction fee payer
+    
     /// CHECK: InstructionsSysvar account - Checked by address constraint
     #[account(address = tx_instructions::ID)]
     pub instruction_sysvar: AccountInfo<'info>,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, InitSpace, Debug)]
-pub struct CreditSetting {
-    pub daily_reward: u64,
+    pub credit_info: Account<'info, CreditInfo>,
+    pub dpr_config: Account<'info, Config>,
 }
 
 #[account]
@@ -485,13 +519,13 @@ pub struct CreditSettingsAccount {
 }
 
 #[derive(Accounts)]
-#[instruction(idx: u16)]
+#[instruction(campaign: u16)]
 pub struct SetSettings<'info> {
     #[account(
         init_if_needed,
         payer = signer,
         space = 8+CreditSettingsAccount::INIT_SPACE,
-        seeds = [b"settings".as_ref(), &idx.to_le_bytes()],
+        seeds = [b"settings".as_ref(), &campaign.to_le_bytes()],
         bump
     )]
     pub settings_account: Account<'info, CreditSettingsAccount>,

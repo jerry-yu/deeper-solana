@@ -1,16 +1,27 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
+import { Program, BorshCoder } from "@coral-xyz/anchor";
 import { DeeperSolana } from "../target/types/deeper_solana";
 import { PublicKey, Keypair, Ed25519Program, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js';
 import assert from 'node:assert';
 import nacl from "tweetnacl";
+// import * as borsh from "@coral-xyz/borsh";
 
 const devKey = Keypair.generate();
+
+interface DayCredit {
+  day: number;
+  credit: number;
+}
+
+interface DayCreditHistory {
+  history: DayCredit[];
+}
+
 
 describe("deeper-solana", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
- 
+
   const program = anchor.workspace.deeperSolana as Program<DeeperSolana>;
   const payer = provider.wallet as anchor.Wallet;
   const [configPDA] = PublicKey.findProgramAddressSync([Buffer.from('config')], program.programId);
@@ -34,7 +45,7 @@ describe("deeper-solana", () => {
   );
 
   it("Updates admin and dev key", async () => {
-   await provider.connection.requestAirdrop(oldAdmin.publicKey, 10e9);
+    await provider.connection.requestAirdrop(oldAdmin.publicKey, 10e9);
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const tx = await program.methods
@@ -50,15 +61,13 @@ describe("deeper-solana", () => {
     assert.equal(configAccount.admin.toBase58(), oldAdmin.publicKey.toBase58());
     assert.equal(configAccount.devKey.toBase58(), oldDevKey.publicKey.toBase58());
 
-    console.log("2222222222222 ");
     await program.methods
-      .updateDevKey(devKey.publicKey)
+      .updateDevKey(payer.publicKey)
       .accounts({
         admin: oldAdmin.publicKey,
         dpr_config: configPDA,
       }).signers([oldAdmin]).rpc();
 
-      console.log("333333333333333333 ");
     await program.methods
       .updateAdmin(payer.publicKey)
       .accounts({
@@ -67,15 +76,14 @@ describe("deeper-solana", () => {
       }).signers([oldAdmin])
       .rpc();
 
-      console.log(" 4444444444444444444 ");
     const configAccount2 = await program.account.config.fetch(configPDA);
-    assert.equal(configAccount2.devKey.toBase58(), devKey.publicKey.toBase58());
+    assert.equal(configAccount2.devKey.toBase58(), payer.publicKey.toBase58());
     assert.equal(configAccount2.admin.toBase58(), payer.publicKey.toBase58());
   });
 
   it("Creates credit account for user1 via setCredit", async () => {
     await program.methods
-      .setCredit(new anchor.BN(100))
+      .setCredit(0, new anchor.BN(100))
       .accounts({
         payer: payer.publicKey,
         dpr_config: configPDA,
@@ -87,14 +95,12 @@ describe("deeper-solana", () => {
 
     const creditAccount = await program.account.creditInfo.fetch(creditPDA1);
     assert.equal(creditAccount.user.toBase58(), user1.publicKey.toBase58());
-    assert.equal(creditAccount.number.toString(), "100");
+    assert.equal(creditAccount.credit.toString(), "100");
   });
-
-
 
   it("Updates user1's credit account via setCredit", async () => {
     await program.methods
-      .setCredit(new anchor.BN(200))
+      .setCredit(0, new anchor.BN(200))
       .accounts({
         payer: payer.publicKey,
         dpr_config: configPDA,
@@ -106,12 +112,12 @@ describe("deeper-solana", () => {
 
     const creditAccount = await program.account.creditInfo.fetch(creditPDA1);
     assert.equal(creditAccount.user.toBase58(), user1.publicKey.toBase58());
-    assert.equal(creditAccount.number.toString(), "200");
+    assert.equal(creditAccount.credit.toString(), "200");
   });
 
   it("Creates and sets credit account for user2 via setCredit", async () => {
     await program.methods
-      .setCredit(new anchor.BN(300))
+      .setCredit(0, new anchor.BN(300))
       .accounts({
         payer: payer.publicKey,
         dpr_config: configPDA,
@@ -123,7 +129,7 @@ describe("deeper-solana", () => {
 
     const creditAccount = await program.account.creditInfo.fetch(creditPDA2);
     assert.equal(creditAccount.user.toBase58(), user2.publicKey.toBase58());
-    assert.equal(creditAccount.number.toString(), "300");
+    assert.equal(creditAccount.credit.toString(), "300");
   });
 
   it("Fails to set credit as non-admin", async () => {
@@ -133,7 +139,7 @@ describe("deeper-solana", () => {
     let error = null;
     try {
       await program.methods
-        .setCredit(new anchor.BN(400))
+        .setCredit(0, new anchor.BN(400))
         .accounts({
           payer: nonAdmin.publicKey,
           dpr_config: configPDA,
@@ -151,32 +157,31 @@ describe("deeper-solana", () => {
     assert(error.message.includes("Only the admin can perform this action"));
 
     const creditAccount = await program.account.creditInfo.fetch(creditPDA1);
-    assert.equal(creditAccount.number.toString(), "200"); // Still 200
+    assert.equal(creditAccount.credit.toString(), "200"); // Still 200
   });
-});
 
+  it("ed25519_verify_sysvar", async () => {
+    const messageSigner = nacl.sign.keyPair.fromSecretKey(payer.payer.secretKey);
+    const messageSignerPublicKey = Buffer.from(messageSigner.publicKey);
+    const messageSignerSecretKey = Buffer.from(messageSigner.secretKey);
 
-describe("ed25519_verify_sysvar", () => { // Updated describe block
-  const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
+    //const message = Buffer.from("Sysvar verification test message", "utf-8");
 
-  // Adjust the program type cast
-  const program = anchor.workspace.deeperSolana as Program<DeeperSolana>;
-  const wallet = provider.wallet as anchor.Wallet;
+    const coder = new BorshCoder(program.idl);
+    const history: DayCreditHistory = {
+      history: [
+        { day: 100, credit: 1 },
+        { day: 200, credit: 2 },
+      ],
+    };
 
-  // Ed25519 keypair for signing messages
-  const messageSigner = nacl.sign.keyPair();
-  const messageSignerPublicKey = Buffer.from(messageSigner.publicKey);
-  const messageSignerSecretKey = Buffer.from(messageSigner.secretKey);
-
-  it("Successfully verifies a valid Ed25519 signature via Sysvar", async () => { // Updated test description
-    const message = Buffer.from("Sysvar verification test message", "utf-8");
+    const message = coder.types.encode("dayCreditHistory", history);
     const signature = Buffer.from(nacl.sign.detached(message, messageSignerSecretKey));
 
     console.log("Message:", message.toString());
     console.log("Public Key (Buffer):", messageSignerPublicKey);
     console.log("Signature (Buffer):", signature);
-    console.log("Signer (Wallet):", wallet.publicKey.toBase58());
+    console.log("Signer (Wallet):", payer.publicKey.toBase58());
 
     // *** Create the Ed25519 Program instruction ***
     const ed25519Instruction = Ed25519Program.createInstructionWithPublicKey({
@@ -199,8 +204,10 @@ describe("ed25519_verify_sysvar", () => { // Updated describe block
           signature
         )
         .accounts({
-          signer: wallet.publicKey,
+          signer: payer.publicKey,
           instructionSysvar: SYSVAR_INSTRUCTIONS_PUBKEY, // Pass the sysvar account ID
+          creditInfo: creditPDA1,
+          dprConfig: configPDA,
         })
         .preInstructions([ed25519Instruction]) // *** Add Ed25519 ix *before* ours ***
         .rpc({ commitment: "confirmed" });
@@ -242,9 +249,12 @@ describe("credit_setting", () => {
       [Buffer.from("settings"), idxBuffer],
       program.programId);
 
+    console.log("Settings Account PDA 0:", settingsAccountPda0.toBase58());
+
     const newSettings = [
-      {  dailyReward: new anchor.BN(200) },
-      {  dailyReward: new anchor.BN(200) },
+      { dailyReward: new anchor.BN(0) },
+      { dailyReward: new anchor.BN(1) },
+      { dailyReward: new anchor.BN(2) },
     ];
 
     try {
@@ -262,10 +272,10 @@ describe("credit_setting", () => {
         commitment: "confirmed",
       });
 
-      //console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
+      console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
 
       await program.methods
-        .addSetting(idx0, new anchor.BN(500))
+        .addSetting(idx0, new anchor.BN(4))
         .accounts({
           settings_account: settingsAccountPda0,
           signer: payer.publicKey,
@@ -283,10 +293,10 @@ describe("credit_setting", () => {
         })
         .view();
 
-      assert.equal(result.dailyReward.toString(), "500");
+      assert.equal(result.dailyReward.toString(), "2");
 
       await program.methods
-        .updateSetting(idx0, 0, new anchor.BN(600))
+        .updateSetting(idx0, 2, new anchor.BN(3))
         .accounts({
           settings_account: settingsAccountPda0,
           signer: payer.publicKey
@@ -294,22 +304,15 @@ describe("credit_setting", () => {
         .rpc({ commitment: "confirmed" });
 
       const result2 = await program.methods
-        .getSetting(idx0, 0)
+        .getSetting(idx0, 2)
         .accounts({
           settings_account: settingsAccountPda0,
         })
         .view();
       console.log("Setting : ", result2);
-      assert.equal(result2.dailyReward.toString(), "600");
+      assert.equal(result2.dailyReward.toString(), "3");
     } catch (error) {
       console.error("Error sending transaction:", error);
-      if (error instanceof anchor.AnchorError) {
-        console.error("Anchor Error:", error.error);
-        console.error("Error Logs:", error.logs);
-      } else if (error.logs) {
-        console.error("Transaction Logs:", error.logs);
-      }
-      throw error;
     }
 
   });

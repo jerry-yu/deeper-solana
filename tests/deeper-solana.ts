@@ -9,12 +9,19 @@ import nacl from "tweetnacl";
 const devKey = Keypair.generate();
 
 interface DayCredit {
+  campaign: number;
   day: number;
   credit: number;
 }
 
 interface DayCreditHistory {
   history: DayCredit[];
+}
+
+function curDay(): number {
+  console.log("Current timestamp:", Date.now());
+    const currentSecond: number = (Date.now() - 1735689600000) / 1000;
+    return (currentSecond / 86400) as number; // 86400 seconds in a day
 }
 
 
@@ -160,86 +167,6 @@ describe("deeper-solana", () => {
     assert.equal(creditAccount.credit.toString(), "200"); // Still 200
   });
 
-  it("ed25519_verify_sysvar", async () => {
-    const messageSigner = nacl.sign.keyPair.fromSecretKey(payer.payer.secretKey);
-    const messageSignerPublicKey = Buffer.from(messageSigner.publicKey);
-    const messageSignerSecretKey = Buffer.from(messageSigner.secretKey);
-
-    //const message = Buffer.from("Sysvar verification test message", "utf-8");
-
-    const coder = new BorshCoder(program.idl);
-    const history: DayCreditHistory = {
-      history: [
-        { day: 100, credit: 1 },
-        { day: 200, credit: 2 },
-      ],
-    };
-
-    const message = coder.types.encode("dayCreditHistory", history);
-    const signature = Buffer.from(nacl.sign.detached(message, messageSignerSecretKey));
-
-    console.log("Message:", message.toString());
-    console.log("Public Key (Buffer):", messageSignerPublicKey);
-    console.log("Signature (Buffer):", signature);
-    console.log("Signer (Wallet):", payer.publicKey.toBase58());
-
-    // *** Create the Ed25519 Program instruction ***
-    const ed25519Instruction = Ed25519Program.createInstructionWithPublicKey({
-      publicKey: messageSignerPublicKey,
-      message: message,
-      signature: signature,
-      // Optional: instructionIndex can usually be omitted or set to default
-      // when creating the instruction like this for preInstructions.
-      // The runtime handles indexing relative to the transaction.
-    });
-
-    console.log(ed25519Instruction.data.toString('hex'));
-    console.log("message lenght", message.length);
-
-    try {
-      const tx = await program.methods
-        .verifyEd25519ViaSysvar( // Call the correct method name
-          messageSignerPublicKey,
-          message,
-          signature
-        )
-        .accounts({
-          signer: payer.publicKey,
-          instructionSysvar: SYSVAR_INSTRUCTIONS_PUBKEY, // Pass the sysvar account ID
-          creditInfo: creditPDA1,
-          dprConfig: configPDA,
-        })
-        .preInstructions([ed25519Instruction]) // *** Add Ed25519 ix *before* ours ***
-        .rpc({ commitment: "confirmed" });
-
-      console.log("Your transaction signature", tx);
-
-      const txInfo = await provider.connection.getTransaction(tx, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-      console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
-
-      // expect(txInfo?.meta?.logMessages).to.include("Verification successful: Preceding Ed25519 instruction data matches arguments.");
-      //expect(txInfo?.meta?.err).to.be.null;
-      assert.equal(txInfo?.meta?.err, null);
-
-    } catch (error) {
-      console.error("Error sending transaction:", error);
-      if (error instanceof anchor.AnchorError) {
-        console.error("Anchor Error:", error.error);
-        console.error("Error Logs:", error.logs);
-      } else if (error.logs) {
-        console.error("Transaction Logs:", error.logs);
-      }
-      throw error;
-    }
-  });
-});
-
-describe("credit_setting", () => {
-  const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
-  const program = anchor.workspace.deeperSolana as Program<DeeperSolana>;
-
-  const payer = provider.wallet as anchor.Wallet;
   it("credit_setting", async () => {
     const idx0 = 0;
     const idxBuffer = Buffer.alloc(2);
@@ -316,7 +243,85 @@ describe("credit_setting", () => {
     }
 
   });
+
+  it("ed25519_verify_sysvar", async () => {
+    const messageSigner = nacl.sign.keyPair.fromSecretKey(payer.payer.secretKey);
+    const messageSignerPublicKey = Buffer.from(messageSigner.publicKey);
+    const messageSignerSecretKey = Buffer.from(messageSigner.secretKey);
+
+    //const message = Buffer.from("Sysvar verification test message", "utf-8");
+
+    const coder = new BorshCoder(program.idl);
+    const idx = 0;
+    const idxBuffer = Buffer.alloc(2);
+    idxBuffer.writeUInt16LE(idx);
+    const history: DayCreditHistory = {
+      history: [
+        {campaign: idx, day: curDay()- 10, credit: 100 },
+        { campaign:idx,day: curDay() + 10, credit: 200 },
+      ],
+    };
+    const [settingsAccountPda0] = PublicKey.findProgramAddressSync(
+      [Buffer.from("settings"), idxBuffer],
+      program.programId);
+
+    const message = coder.types.encode("dayCreditHistory", history);
+    const signature = Buffer.from(nacl.sign.detached(message, messageSignerSecretKey));
+
+    console.log("Message:", message.toString());
+    console.log("Public Key (Buffer):", messageSignerPublicKey);
+    console.log("Signature (Buffer):", signature);
+    console.log("Signer (Wallet):", payer.publicKey.toBase58());
+
+    // *** Create the Ed25519 Program instruction ***
+    const ed25519Instruction = Ed25519Program.createInstructionWithPublicKey({
+      publicKey: messageSignerPublicKey,
+      message: message,
+      signature: signature,
+    });
+
+    console.log(ed25519Instruction.data.toString('hex'));
+    console.log("message lenght", message.length);
+
+    try {
+      const tx = await program.methods
+        .verifyEd25519ViaSysvar( // Call the correct method name
+          messageSignerPublicKey,
+          message,
+          signature
+        )
+        .accounts({
+          signer: payer.publicKey,
+          instructionSysvar: SYSVAR_INSTRUCTIONS_PUBKEY, // Pass the sysvar account ID
+          creditInfo: creditPDA1,
+          dprConfig: configPDA,
+          settingsAccount: settingsAccountPda0,
+        })
+        .preInstructions([ed25519Instruction]) // *** Add Ed25519 ix *before* ours ***
+        .rpc({ commitment: "confirmed" });
+
+      console.log("Your transaction signature", tx);
+
+      const txInfo = await provider.connection.getTransaction(tx, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+      console.log("Transaction Logs:\n", txInfo?.meta?.logMessages?.join("\n"));
+
+      // expect(txInfo?.meta?.logMessages).to.include("Verification successful: Preceding Ed25519 instruction data matches arguments.");
+      //expect(txInfo?.meta?.err).to.be.null;
+      assert.equal(txInfo?.meta?.err, null);
+
+    } catch (error) {
+      console.error("Error sending transaction:", error);
+      if (error instanceof anchor.AnchorError) {
+        console.error("Anchor Error:", error.error);
+        console.error("Error Logs:", error.logs);
+      } else if (error.logs) {
+        console.error("Transaction Logs:", error.logs);
+      }
+      throw error;
+    }
+  });
 });
+
 
 // it("Fails verification via Sysvar with a tampered signature", async () => {
 //   const message = Buffer.from("Another message for sysvar", "utf-8");

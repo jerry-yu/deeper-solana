@@ -24,4 +24,8 @@ pub enum DeeperErrorCode {
     InvalidSettingIndex,
     #[msg("Provided idx does not match account idx")]
     InvalidIdx,
+    #[msg("The day's reward is claimed")]
+    InvalidDay,
+    #[msg("The campaign is not active")]
+    InvalidCampaign,
 }

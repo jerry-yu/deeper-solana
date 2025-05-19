@@ -2,125 +2,134 @@ pub mod state;
 // pub mod instructions;
 pub mod error;
 
-use state::{Config, CreditInfo,CreditSetting,DayCreditHistory};
+use state::{Config, CreditInfo, CreditSetting, DayCreditHistory};
 
 use anchor_lang::prelude::*;
 use error::DeeperErrorCode;
-use solana_program::{
+use anchor_lang::solana_program::{
     ed25519_program, instruction::Instruction, program::invoke, pubkey::Pubkey,
     sysvar::instructions as tx_instructions, sysvar::instructions::load_instruction_at_checked,
 };
+//use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, SetAuthority};
+// use anchor_spl::{
+//     associated_token::AssociatedToken,
+//     token_interface::{Mint, TokenAccount, TokenInterface},
+// };
+
 pub const CREDIT_SIZE: usize = 10;
-pub const START_TIMESTAMP: i64 = 173568960000; // 2025-01-01 00:00:00 UTC with ms precision
-// Replace with your program's actual ID after deployment
+pub const LEVEL_ONE: u16 = 100;
+
+pub const START_TIMESTAMP: i64 = 1735689600; // 2025-01-01 00:00:00 UTC with seconds precision
+                                             // Replace with your program's actual ID after deployment
 declare_id!("H1niZpkjAjop7hqR4jimhtmstiWTLZ9fnooR4vTWFbHs");
 
-    fn cur_day() -> u32 {
-        let clock: Clock = Clock::get().unwrap();
-        let current_second = (clock.unix_timestamp - START_TIMESTAMP) / 1000;
-        (current_second % 86400) as u32 // 86400 seconds in a day
+fn cur_day() -> u32 {
+    let clock: Clock = Clock::get().unwrap();
+    msg!("Current clock: {:?}", clock.unix_timestamp);
+    let current_second = (clock.unix_timestamp - START_TIMESTAMP) / 1000;
+    (current_second / 86400) as u32 // 86400 seconds in a day
+}
+
+fn verify_ed25519_signature(
+    public_key: [u8; 32],
+    message: Vec<u8>,
+    signature: [u8; 64],
+    data: &[u8],
+) -> Result<()> {
+    // 6. Deserialize the Ed25519 instruction data to verify its contents
+    msg!("Preceding instruction data length: {}", data.len());
+
+    // Minimum size check (header = 16 bytes)
+    if data.len() < 16 {
+        msg!("Error: Preceding Ed25519 instruction data length ({}) is less than minimum header size (16).", data.len());
+        return Err(error!(DeeperErrorCode::InvalidEd25519InstructionData));
     }
 
-    fn verify_ed25519_signature(
-        public_key: [u8; 32],
-        message: Vec<u8>,
-        signature: [u8; 64],
-        data : &[u8],
-    ) -> Result<()> {
-        // 6. Deserialize the Ed25519 instruction data to verify its contents
-        msg!("Preceding instruction data length: {}", data.len());
+    let num_signatures = data[0];
+    require!(
+        num_signatures == 1,
+        DeeperErrorCode::InvalidEd25519InstructionData
+    );
 
-        // Minimum size check (header = 16 bytes)
-        if data.len() < 16 {
-            msg!("Error: Preceding Ed25519 instruction data length ({}) is less than minimum header size (16).", data.len());
-            return Err(error!(DeeperErrorCode::InvalidEd25519InstructionData));
-        }
+    // Offsets are little-endian u16
+    let signature_offset = u16::from_le_bytes(data[2..4].try_into().unwrap()) as usize;
+    let public_key_offset = u16::from_le_bytes(data[6..8].try_into().unwrap()) as usize;
+    let message_data_offset = u16::from_le_bytes(data[10..12].try_into().unwrap()) as usize;
+    let message_data_size = u16::from_le_bytes(data[12..14].try_into().unwrap()) as usize;
 
-        let num_signatures = data[0];
-        require!(
-            num_signatures == 1,
-            DeeperErrorCode::InvalidEd25519InstructionData
-        );
+    // msg!("Parsed signature_offset: {}", signature_offset);
+    // msg!("Parsed public_key_offset: {}", public_key_offset);
+    // msg!("Parsed message_data_offset: {}", message_data_offset);
+    // msg!("Parsed message_data_size: {}", message_data_size);
 
-        // Offsets are little-endian u16
-        let signature_offset = u16::from_le_bytes(data[2..4].try_into().unwrap()) as usize;
-        let public_key_offset = u16::from_le_bytes(data[6..8].try_into().unwrap()) as usize;
-        let message_data_offset = u16::from_le_bytes(data[10..12].try_into().unwrap()) as usize;
-        let message_data_size = u16::from_le_bytes(data[12..14].try_into().unwrap()) as usize;
+    //msg!("Parsed offsets from preceding ix: sig={}, pk={}, msg={}, msg_size={}", signature_offset, public_key_offset, message_data_offset, message_data_size);
 
-        msg!("Parsed signature_offset: {}", signature_offset);
-        msg!("Parsed public_key_offset: {}", public_key_offset);
-        msg!("Parsed message_data_offset: {}", message_data_offset);
-        msg!("Parsed message_data_size: {}", message_data_size);
-
-        //msg!("Parsed offsets from preceding ix: sig={}, pk={}, msg={}, msg_size={}", signature_offset, public_key_offset, message_data_offset, message_data_size);
-
-        // Check data boundaries based on offsets and sizes
-        let sig_end = signature_offset.checked_add(64).ok_or_else(|| {
-            msg!(
-                "Error: Overflow calculating sig_end (offset={})",
-                signature_offset
-            );
-            error!(DeeperErrorCode::InvalidEd25519InstructionData)
-        })?;
-        let pk_end = public_key_offset.checked_add(32).ok_or_else(|| {
-            msg!(
-                "Error: Overflow calculating pk_end (offset={})",
-                public_key_offset
-            );
-            error!(DeeperErrorCode::InvalidEd25519InstructionData)
-        })?;
-        let msg_end = message_data_offset
-            .checked_add(message_data_size as usize)
-            .ok_or_else(|| {
-                msg!(
-                    "Error: Overflow calculating msg_end (offset={}, size={})",
-                    message_data_offset,
-                    message_data_size
-                );
-                error!(DeeperErrorCode::InvalidEd25519InstructionData)
-            })?;
-
-        msg!("Calculated sig_end: {}", sig_end);
-        msg!("Calculated pk_end: {}", pk_end);
-        msg!("Calculated msg_end: {}", msg_end);
+    // Check data boundaries based on offsets and sizes
+    let sig_end = signature_offset.checked_add(64).ok_or_else(|| {
         msg!(
-            "Comparing calculated ends against data.len(): {}",
-            data.len()
+            "Error: Overflow calculating sig_end (offset={})",
+            signature_offset
         );
+        error!(DeeperErrorCode::InvalidEd25519InstructionData)
+    })?;
+    let pk_end = public_key_offset.checked_add(32).ok_or_else(|| {
+        msg!(
+            "Error: Overflow calculating pk_end (offset={})",
+            public_key_offset
+        );
+        error!(DeeperErrorCode::InvalidEd25519InstructionData)
+    })?;
+    let msg_end = message_data_offset
+        .checked_add(message_data_size as usize)
+        .ok_or_else(|| {
+            msg!(
+                "Error: Overflow calculating msg_end (offset={}, size={})",
+                message_data_offset,
+                message_data_size
+            );
+            error!(DeeperErrorCode::InvalidEd25519InstructionData)
+        })?;
 
-        require!(
-            sig_end <= data.len(),
-            DeeperErrorCode::InvalidEd25519InstructionData
-        );
-        require!(
-            pk_end <= data.len(),
-            DeeperErrorCode::InvalidEd25519InstructionData
-        );
-        require!(
-            msg_end <= data.len(),
-            DeeperErrorCode::InvalidEd25519InstructionData
-        );
+    // msg!("Calculated sig_end: {}", sig_end);
+    // msg!("Calculated pk_end: {}", pk_end);
+    // msg!("Calculated msg_end: {}", msg_end);
+    // msg!(
+    //     "Comparing calculated ends against data.len(): {}",
+    //     data.len()
+    // );
 
-        // 7. Extract the data from the preceding instruction
-        let ix_signature = &data[signature_offset..sig_end];
-        let ix_public_key = &data[public_key_offset..pk_end];
-        let ix_message = &data[message_data_offset..msg_end];
+    require!(
+        sig_end <= data.len(),
+        DeeperErrorCode::InvalidEd25519InstructionData
+    );
+    require!(
+        pk_end <= data.len(),
+        DeeperErrorCode::InvalidEd25519InstructionData
+    );
+    require!(
+        msg_end <= data.len(),
+        DeeperErrorCode::InvalidEd25519InstructionData
+    );
 
-        // 8. Compare with the arguments passed to *this* instruction
-        require!(
-            ix_signature == signature,
-            DeeperErrorCode::SignatureMismatch
-        );
-        require!(
-            ix_public_key == public_key,
-            DeeperErrorCode::PublicKeyMismatch
-        );
-        require!(ix_message == message, DeeperErrorCode::MessageMismatch);
+    // 7. Extract the data from the preceding instruction
+    let ix_signature = &data[signature_offset..sig_end];
+    let ix_public_key = &data[public_key_offset..pk_end];
+    let ix_message = &data[message_data_offset..msg_end];
 
-        msg!("Verification successful: Preceding Ed25519 instruction data matches arguments.");
-        Ok(())
-    }
+    // 8. Compare with the arguments passed to *this* instruction
+    require!(
+        ix_signature == signature,
+        DeeperErrorCode::SignatureMismatch
+    );
+    require!(
+        ix_public_key == public_key,
+        DeeperErrorCode::PublicKeyMismatch
+    );
+    require!(ix_message == message, DeeperErrorCode::MessageMismatch);
+
+    msg!("Verification successful: Preceding Ed25519 instruction data matches arguments.");
+    Ok(())
+}
 
 #[program]
 pub mod deeper_solana {
@@ -170,11 +179,7 @@ pub mod deeper_solana {
 
         let credit = &mut ctx.accounts.credit_info;
         credit.day = cur_day();
-        msg!(
-            "Updated timestamp for user {}: {}",
-            credit.user,
-            credit.day
-        );
+        msg!("Updated timestamp for user {}: {}", credit.user, credit.day);
         Ok(())
     }
 
@@ -191,7 +196,7 @@ pub mod deeper_solana {
         Ok(())
     }
 
-    pub fn set_credit(ctx: Context<SetCredit>,campaign: u16, new_credit: u32) -> Result<()> {
+    pub fn set_credit(ctx: Context<SetCredit>, campaign: u16, new_credit: u16) -> Result<()> {
         // Check if the signer is the admin
         let config = &ctx.accounts.dpr_config;
         if ctx.accounts.payer.key() != config.admin {
@@ -202,11 +207,58 @@ pub mod deeper_solana {
         credit.user = ctx.accounts.user.key();
         credit.campaign = campaign;
         credit.credit = new_credit;
-        if credit.day == 0 {
+        if credit.day == 0 && new_credit > LEVEL_ONE {
             credit.day = cur_day();
         }
+        msg!(
+            "Updated credit for user {}: day: {}",
+            credit.user,
+            credit.day
+        );
         Ok(())
     }
+
+    //  pub fn set_mint_authority(ctx: Context<SetMintAuthority>) -> Result<()> {
+    //     let cpi_accounts = SetAuthority {
+    //         account_or_mint: ctx.accounts.mint.to_account_info(),
+    //         current_authority: ctx.accounts.current_authority.to_account_info(),
+    //     };
+    //     let cpi_program = ctx.accounts.token_program.to_account_info();
+    //     let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+
+    //     token::set_authority(
+    //         cpi_ctx,
+    //         anchor_spl::token::spl_token::instruction::AuthorityType::MintTokens,
+    //         Some(ctx.accounts.mint_authority.key()),
+    //     )?;
+
+    //     msg!(
+    //         "Mint Authority set to PDA: {} for Mint: {}",
+    //         ctx.accounts.mint_authority.key(),
+    //         ctx.accounts.mint.key()
+    //     );
+    //     Ok(())
+    // }
+
+    //  pub fn mint_tokens(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
+    //     // 获取 PDA 的 seeds 和 bump
+    //     let seeds = &[b"mint-authority".as_ref(), &[ctx.bumps.mint_authority]];
+    //     let signer_seeds = &[&seeds[..]];
+
+    //     // 调用 SPL Token 的 mint_to 指令
+    //     let cpi_accounts = MintTo {
+    //         mint: ctx.accounts.mint.to_account_info(),
+    //         to: ctx.accounts.token_account.to_account_info(),
+    //         authority: ctx.accounts.mint_authority.to_account_info(),
+    //     };
+    //     let cpi_program = ctx.accounts.token_program.to_account_info();
+    //     let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts).with_signer(signer_seeds);
+
+    //     // 执行 mint_to 操作
+    //     token::mint_to(cpi_ctx, amount)?;
+    //     msg!("Minted {} tokens to {}", amount, ctx.accounts.token_account.key());
+    //     Ok(())
+    // }
 
     pub fn verify_ed25519_via_sysvar(
         // Renamed function for clarity
@@ -221,7 +273,7 @@ pub mod deeper_solana {
         msg!("Expected Signature: {:?}", signature);
         msg!("dev key: {:?}", ctx.accounts.dpr_config.dev_key);
 
-        if ctx.accounts.dpr_config.dev_key != Pubkey::from(public_key)  {
+        if ctx.accounts.dpr_config.dev_key != Pubkey::from(public_key) {
             return err!(DeeperErrorCode::Unauthorized);
         }
 
@@ -268,6 +320,44 @@ pub mod deeper_solana {
         verify_ed25519_signature(public_key, message, signature, &preceding_ix.data)?;
 
         msg!("Verification successful: Preceding Ed25519 instruction data matches arguments.");
+
+        let info = &mut ctx.accounts.credit_info;
+        let settings = &ctx.accounts.settings_account;
+        msg!("settings {:?}", settings.settings);
+
+        if info.campaign != settings.idx {
+            return err!(DeeperErrorCode::InvalidIdx);
+        }
+        let cur_day = cur_day();
+        // if info.day >= cur_day {
+        //     return err!(DeeperErrorCode::InvalidDay);
+        // }
+        let mut reward = 0;
+        let mut last_day = info.day;
+        let mut last_level = 0;
+
+        for day_credit in history.history.iter() {
+            if day_credit.campaign != info.campaign {
+                return err!(DeeperErrorCode::InvalidCampaign);
+            }
+            // if day_credit.day > cur_day {
+            //     return err!(DeeperErrorCode::InvalidDay);
+            // }
+            msg!("Day credit: {:?} last_day {}", day_credit, last_day);
+            let level = day_credit.credit / 100;
+            last_level = if level > 8 { 8 } else { level };
+
+            let setting = &settings.settings[level as usize];
+
+            reward += setting.daily_reward * (day_credit.day.saturating_sub(last_day)) as u64;
+            last_day = day_credit.day;
+        }
+        if last_day < cur_day {
+            let setting = &settings.settings[last_level as usize];
+            reward += setting.daily_reward * (cur_day - last_day) as u64;
+        }
+        msg!("Reward: {}", reward);
+
         Ok(())
     }
 
@@ -380,10 +470,7 @@ pub mod deeper_solana {
         Ok(account.settings[setting_index as usize])
     }
 
-     pub fn dummy_instruction(
-        _ctx: Context<GetSetting>,
-        _dummy: DayCreditHistory,
-    ) -> Result<()> {
+    pub fn dummy_instruction(_ctx: Context<GetSetting>, _dummy: DayCreditHistory) -> Result<()> {
         // Empty implementation, used only to allow IDL to include DayCreditHistory
         Ok(())
     }
@@ -502,12 +589,13 @@ pub struct VerifyEd25519Sysvar<'info> {
     // Renamed context struct
     #[account(mut)]
     pub signer: Signer<'info>, // Transaction fee payer
-    
+
     /// CHECK: InstructionsSysvar account - Checked by address constraint
     #[account(address = tx_instructions::ID)]
     pub instruction_sysvar: AccountInfo<'info>,
     pub credit_info: Account<'info, CreditInfo>,
     pub dpr_config: Account<'info, Config>,
+    pub settings_account: Account<'info, CreditSettingsAccount>,
 }
 
 #[account]
@@ -571,3 +659,31 @@ pub struct GetSetting<'info> {
     )]
     pub settings_account: Account<'info, CreditSettingsAccount>,
 }
+
+// #[derive(Accounts)]
+// pub struct SetMintAuthority<'info> {
+//     #[account(mut)]
+//     pub mint: Account<'info, Mint>,
+//     #[account(mut)]
+//     pub current_authority: Signer<'info>, // 当前 Mint Authority（签名者）
+//     #[account(
+//         seeds = [b"mint-authority"],
+//         bump
+//     )]
+//     pub mint_authority: SystemAccount<'info>, // PDA 作为新 Mint Authority
+//     pub token_program: Program<'info, Token>,
+// }
+
+// #[derive(Accounts)]
+// pub struct MintTokens<'info> {
+//     #[account(mut)]
+//     pub mint: Account<'info, Mint>, // Mint 账户
+//     #[account(mut)]
+//     pub token_account: Account<'info, TokenAccount>, // 目标 Token 账户
+//     #[account(
+//         seeds = [b"mint-authority"],
+//         bump
+//     )]
+//     pub mint_authority: SystemAccount<'info>, // PDA 作为 Mint Authority
+//     pub token_program: Program<'info, Token>, // SPL Token 程序
+// }

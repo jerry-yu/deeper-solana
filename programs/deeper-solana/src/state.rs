@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use solana_program::pubkey::Pubkey;
+use anchor_lang::solana_program::pubkey::Pubkey;
 
 /// Defines the structure of the configuration account.
 #[account]
@@ -22,8 +22,8 @@ pub struct CreditInfo {
     pub bump: u8,
     /// The public key of the user.
     pub user: Pubkey,
-    pub campaign : u16,
-    pub credit: u32,
+    pub campaign: u16,
+    pub credit: u16,
     pub day: u32,
 }
 /// Defines the structure of the credit settings.
@@ -34,11 +34,12 @@ pub struct CreditSetting {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
 pub struct DayCredit {
+    pub campaign: u16,
+    pub credit: u16,
     pub day: u32,
-    pub credit: u32,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct DayCreditHistory {
-    pub history : Vec<DayCredit>,
+    pub history: Vec<DayCredit>,
 }

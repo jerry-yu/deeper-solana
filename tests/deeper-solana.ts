@@ -2,9 +2,16 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program, BorshCoder } from "@coral-xyz/anchor";
 import { DeeperSolana } from "../target/types/deeper_solana";
 import { PublicKey, Keypair, Ed25519Program, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js';
-import assert from 'node:assert';
+import assert, { partialDeepStrictEqual } from 'node:assert';
 import nacl from "tweetnacl";
-// import * as borsh from "@coral-xyz/borsh";
+import {
+  TOKEN_PROGRAM_ID,
+  createMint,
+  getOrCreateAssociatedTokenAccount,
+  getAccount,
+} from "@solana/spl-token";
+import { min } from "bn.js";
+
 
 const devKey = Keypair.generate();
 
@@ -19,13 +26,15 @@ interface DayCreditHistory {
 }
 
 function curDay(): number {
-  console.log("Current timestamp:", Date.now());
-    const currentSecond: number = (Date.now() - 1735689600000) / 1000;
-    return (currentSecond / 86400) as number; // 86400 seconds in a day
+  const currentSecond: number = (Date.now() - 1735689600000) / 1000;
+  return (currentSecond / 86400) as number; // 86400 seconds in a day
 }
 
 
 describe("deeper-solana", () => {
+  let mint: PublicKey;
+  let mintAuthorityPda: PublicKey;
+
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
@@ -210,7 +219,6 @@ describe("deeper-solana", () => {
         })
         .rpc({ commitment: "confirmed" });
 
-
       const settingsAccount = await program.account.creditSettingsAccount.fetch(settingsAccountPda0);
       console.log("settingsAccount :", settingsAccount);
       const result = await program.methods
@@ -244,7 +252,78 @@ describe("deeper-solana", () => {
 
   });
 
+  it("Creates a new SPL-Token (Mint) and Sets Mint Authority to PDA", async () => {
+    try {
+      await provider.connection.requestAirdrop(user1.publicKey, 2e9);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const [pda, _bump] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("mint-authority")],
+        program.programId
+      );
+      mintAuthorityPda = pda;
+      mint = await createMint(
+        provider.connection,
+        user1, 
+        user1.publicKey, 
+        null,
+        9 
+      );
+      console.log(`SPL-Token Mint created: ${mint.toBase58()}`);
+
+      const ata = await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        payer.payer,
+        mint,
+        payer.publicKey,
+      );
+      console.log("ATA Address:", ata.address.toBase58());
+
+      const mintInfo = await provider.connection.getParsedAccountInfo(mint);
+      console.log("Mint Info:", (mintInfo.value!.data as any).parsed.info);
+
+      const mintAuthority = (mintInfo.value!.data as any).parsed.info.mintAuthority;
+      const decimals = (mintInfo.value!.data as any).parsed.info.decimals;
+      assert.equal(
+        mintAuthority,
+        user1.publicKey.toBase58(),
+        "Initial Mint Authority should be wallet"
+      );
+      assert.equal(decimals, 9, "Mint decimals should be 9");
+
+      console.log(`PDA (Mint Authority): ${mintAuthorityPda.toBase58()}`);
+
+      await program.methods
+        .setMintAuthority()
+        .accounts({
+          mint: mint,
+          currentAuthority: user1.publicKey,
+          mintAuthority: mintAuthorityPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        }).signers([user1])
+        .rpc();
+
+      console.log(`Mint Authority set to PDA: ${mintAuthorityPda.toBase58()} for Mint: ${mint.toBase58()}`);
+
+      // 验证 Mint Authority 是否正确设置
+      const mintInfo2 = await provider.connection.getParsedAccountInfo(mint);
+      const mintAuthority2 = (mintInfo2.value!.data as any).parsed.info.mintAuthority;
+      assert.equal(
+        mintAuthority2,
+        mintAuthorityPda.toBase58(),
+        "Mint Authority should be set to PDA"
+      );
+    } catch (error) {
+      console.error("Error setting Mint Authority:", error);
+      throw error;
+    }
+  });
+
   it("ed25519_verify_sysvar", async () => {
+
+    await provider.connection.requestAirdrop(payer.publicKey, 1e9);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
     const messageSigner = nacl.sign.keyPair.fromSecretKey(payer.payer.secretKey);
     const messageSignerPublicKey = Buffer.from(messageSigner.publicKey);
     const messageSignerSecretKey = Buffer.from(messageSigner.secretKey);
@@ -257,8 +336,8 @@ describe("deeper-solana", () => {
     idxBuffer.writeUInt16LE(idx);
     const history: DayCreditHistory = {
       history: [
-        {campaign: idx, day: curDay()- 10, credit: 100 },
-        { campaign:idx,day: curDay() + 10, credit: 200 },
+        { campaign: idx, day: curDay() - 10, credit: 100 },
+        { campaign: idx, day: curDay() + 10, credit: 200 },
       ],
     };
     const [settingsAccountPda0] = PublicKey.findProgramAddressSync(
@@ -268,7 +347,6 @@ describe("deeper-solana", () => {
     const message = coder.types.encode("dayCreditHistory", history);
     const signature = Buffer.from(nacl.sign.detached(message, messageSignerSecretKey));
 
-    console.log("Message:", message.toString());
     console.log("Public Key (Buffer):", messageSignerPublicKey);
     console.log("Signature (Buffer):", signature);
     console.log("Signer (Wallet):", payer.publicKey.toBase58());
@@ -281,7 +359,16 @@ describe("deeper-solana", () => {
     });
 
     console.log(ed25519Instruction.data.toString('hex'));
-    console.log("message lenght", message.length);
+    console.log("message length", message.length);
+
+    console.log("mint Address:", mint.toBase58(), payer.publicKey.toBase58());
+    const ata = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      payer.payer,
+      mint,
+      payer.publicKey,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     try {
       const tx = await program.methods
@@ -296,6 +383,10 @@ describe("deeper-solana", () => {
           creditInfo: creditPDA1,
           dprConfig: configPDA,
           settingsAccount: settingsAccountPda0,
+          mint: mint,
+          tokenAccount: ata.address,
+          mintAuthority: mintAuthorityPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
         })
         .preInstructions([ed25519Instruction]) // *** Add Ed25519 ix *before* ours ***
         .rpc({ commitment: "confirmed" });

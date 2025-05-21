@@ -5,12 +5,12 @@ pub mod error;
 use state::{Config, CreditInfo, CreditSetting, DayCreditHistory};
 
 use anchor_lang::prelude::*;
-use error::DeeperErrorCode;
 use anchor_lang::solana_program::{
     ed25519_program, instruction::Instruction, program::invoke, pubkey::Pubkey,
     sysvar::instructions as tx_instructions, sysvar::instructions::load_instruction_at_checked,
 };
-//use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, SetAuthority};
+use anchor_spl::token::{self, Mint, MintTo, SetAuthority, Token, TokenAccount};
+use error::DeeperErrorCode;
 // use anchor_spl::{
 //     associated_token::AssociatedToken,
 //     token_interface::{Mint, TokenAccount, TokenInterface},
@@ -128,6 +128,7 @@ fn verify_ed25519_signature(
     require!(ix_message == message, DeeperErrorCode::MessageMismatch);
 
     msg!("Verification successful: Preceding Ed25519 instruction data matches arguments.");
+
     Ok(())
 }
 
@@ -218,47 +219,51 @@ pub mod deeper_solana {
         Ok(())
     }
 
-    //  pub fn set_mint_authority(ctx: Context<SetMintAuthority>) -> Result<()> {
-    //     let cpi_accounts = SetAuthority {
-    //         account_or_mint: ctx.accounts.mint.to_account_info(),
-    //         current_authority: ctx.accounts.current_authority.to_account_info(),
-    //     };
-    //     let cpi_program = ctx.accounts.token_program.to_account_info();
-    //     let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    pub fn set_mint_authority(ctx: Context<SetMintAuthority>) -> Result<()> {
+        let cpi_accounts = SetAuthority {
+            account_or_mint: ctx.accounts.mint.to_account_info(),
+            current_authority: ctx.accounts.current_authority.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
-    //     token::set_authority(
-    //         cpi_ctx,
-    //         anchor_spl::token::spl_token::instruction::AuthorityType::MintTokens,
-    //         Some(ctx.accounts.mint_authority.key()),
-    //     )?;
+        token::set_authority(
+            cpi_ctx,
+            anchor_spl::token::spl_token::instruction::AuthorityType::MintTokens,
+            Some(ctx.accounts.mint_authority.key()),
+        )?;
 
-    //     msg!(
-    //         "Mint Authority set to PDA: {} for Mint: {}",
-    //         ctx.accounts.mint_authority.key(),
-    //         ctx.accounts.mint.key()
-    //     );
-    //     Ok(())
-    // }
+        msg!(
+            "Mint Authority set to PDA: {} for Mint: {}",
+            ctx.accounts.mint_authority.key(),
+            ctx.accounts.mint.key()
+        );
+        Ok(())
+    }
 
-    //  pub fn mint_tokens(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
-    //     // 获取 PDA 的 seeds 和 bump
-    //     let seeds = &[b"mint-authority".as_ref(), &[ctx.bumps.mint_authority]];
-    //     let signer_seeds = &[&seeds[..]];
+    pub fn mint_tokens(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
+        // 获取 PDA 的 seeds 和 bump
+        let seeds = &[b"mint-authority".as_ref(), &[ctx.bumps.mint_authority]];
+        let signer_seeds = &[&seeds[..]];
 
-    //     // 调用 SPL Token 的 mint_to 指令
-    //     let cpi_accounts = MintTo {
-    //         mint: ctx.accounts.mint.to_account_info(),
-    //         to: ctx.accounts.token_account.to_account_info(),
-    //         authority: ctx.accounts.mint_authority.to_account_info(),
-    //     };
-    //     let cpi_program = ctx.accounts.token_program.to_account_info();
-    //     let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts).with_signer(signer_seeds);
+        // 调用 SPL Token 的 mint_to 指令
+        let cpi_accounts = MintTo {
+            mint: ctx.accounts.mint.to_account_info(),
+            to: ctx.accounts.token_account.to_account_info(),
+            authority: ctx.accounts.mint_authority.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts).with_signer(signer_seeds);
 
-    //     // 执行 mint_to 操作
-    //     token::mint_to(cpi_ctx, amount)?;
-    //     msg!("Minted {} tokens to {}", amount, ctx.accounts.token_account.key());
-    //     Ok(())
-    // }
+        // 执行 mint_to 操作
+        token::mint_to(cpi_ctx, amount)?;
+        msg!(
+            "Minted {} tokens to {}",
+            amount,
+            ctx.accounts.token_account.key()
+        );
+        Ok(())
+    }
 
     pub fn verify_ed25519_via_sysvar(
         // Renamed function for clarity
@@ -357,6 +362,26 @@ pub mod deeper_solana {
             reward += setting.daily_reward * (cur_day - last_day) as u64;
         }
         msg!("Reward: {}", reward);
+
+        let seeds = &[b"mint-authority".as_ref(), &[ctx.bumps.mint_authority]];
+        let signer_seeds = &[&seeds[..]];
+
+        // 调用 SPL Token 的 mint_to 指令
+        let cpi_accounts = MintTo {
+            mint: ctx.accounts.mint.to_account_info(),
+            to: ctx.accounts.token_account.to_account_info(),
+            authority: ctx.accounts.mint_authority.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts).with_signer(signer_seeds);
+
+        // 执行 mint_to 操作
+        token::mint_to(cpi_ctx, reward)?;
+        msg!(
+            "Minted {} tokens to {}",
+            reward,
+            ctx.accounts.token_account.key()
+        );
 
         Ok(())
     }
@@ -596,6 +621,17 @@ pub struct VerifyEd25519Sysvar<'info> {
     pub credit_info: Account<'info, CreditInfo>,
     pub dpr_config: Account<'info, Config>,
     pub settings_account: Account<'info, CreditSettingsAccount>,
+
+    #[account(mut)]
+    pub mint: Account<'info, Mint>, // Mint 账户
+    #[account(mut)]
+    pub token_account: Account<'info, TokenAccount>, // 目标 Token 账户
+    #[account(
+        seeds = [b"mint-authority"],
+        bump
+    )]
+    pub mint_authority: SystemAccount<'info>, // PDA 作为 Mint Authority
+    pub token_program: Program<'info, Token>, // SPL Token 程序
 }
 
 #[account]
@@ -660,30 +696,30 @@ pub struct GetSetting<'info> {
     pub settings_account: Account<'info, CreditSettingsAccount>,
 }
 
-// #[derive(Accounts)]
-// pub struct SetMintAuthority<'info> {
-//     #[account(mut)]
-//     pub mint: Account<'info, Mint>,
-//     #[account(mut)]
-//     pub current_authority: Signer<'info>, // 当前 Mint Authority（签名者）
-//     #[account(
-//         seeds = [b"mint-authority"],
-//         bump
-//     )]
-//     pub mint_authority: SystemAccount<'info>, // PDA 作为新 Mint Authority
-//     pub token_program: Program<'info, Token>,
-// }
+#[derive(Accounts)]
+pub struct SetMintAuthority<'info> {
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub current_authority: Signer<'info>, // 当前 Mint Authority（签名者）
+    #[account(
+        seeds = [b"mint-authority"],
+        bump
+    )]
+    pub mint_authority: SystemAccount<'info>, // PDA 作为新 Mint Authority
+    pub token_program: Program<'info, Token>,
+}
 
-// #[derive(Accounts)]
-// pub struct MintTokens<'info> {
-//     #[account(mut)]
-//     pub mint: Account<'info, Mint>, // Mint 账户
-//     #[account(mut)]
-//     pub token_account: Account<'info, TokenAccount>, // 目标 Token 账户
-//     #[account(
-//         seeds = [b"mint-authority"],
-//         bump
-//     )]
-//     pub mint_authority: SystemAccount<'info>, // PDA 作为 Mint Authority
-//     pub token_program: Program<'info, Token>, // SPL Token 程序
-// }
+#[derive(Accounts)]
+pub struct MintTokens<'info> {
+    #[account(mut)]
+    pub mint: Account<'info, Mint>, // Mint 账户
+    #[account(mut)]
+    pub token_account: Account<'info, TokenAccount>, // 目标 Token 账户
+    #[account(
+        seeds = [b"mint-authority"],
+        bump
+    )]
+    pub mint_authority: SystemAccount<'info>, // PDA 作为 Mint Authority
+    pub token_program: Program<'info, Token>, // SPL Token 程序
+}
